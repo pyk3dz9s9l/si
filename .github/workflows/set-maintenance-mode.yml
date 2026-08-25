@@ -1,34 +1,30 @@
 name: Set maintenance mode
-
-# Required for IDP JWT and actions/checkout
 permissions:
-      id-token: write
-      contents: read
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "where to deploy"
-
+  id-token: write
+  contents: read
 jobs:
   down:
     environment: ${{ inputs.environment }}
     name: Set maintenance mode
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
-          role-session-name: GitHub_to_AWS_via_FederatedOIDC
-          aws-region: us-east-1
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Toggle maintenance
-        run: |
-          component/toolbox/awsi.sh toggle-maintenance -p pull-from-env -r us-east-1 -s sdf -m y -a y
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
+        role-session-name: GitHub_to_AWS_via_FederatedOIDC
+        aws-region: us-east-1
+    - name: Checkout code
+      uses: actions/checkout@v4.3.1
+    - name: Toggle maintenance
+      run: |
+        component/toolbox/awsi.sh toggle-maintenance -p pull-from-env -r us-east-1 -s sdf -m y -a y
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+        description: where to deploy
