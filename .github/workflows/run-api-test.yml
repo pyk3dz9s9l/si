@@ -1,27 +1,4 @@
 name: API Test
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "where to test"
-  workflow_dispatch:
-    inputs:
-      environment:
-        type: choice
-        required: true
-        description: "where to test"
-        default: "tools"
-        options:
-          - tools
-          - production
-          - perf
-  repository_dispatch:
-    types:
-      - webhook
-
 jobs:
   define-test-matrix:
     runs-on: ubuntu-latest
@@ -29,34 +6,33 @@ jobs:
     outputs:
       tests: ${{ steps.tests.outputs.tests }}
     steps:
-      - uses: actions/checkout@v4
-      - id: tests
-        working-directory: bin/si-sdf-api-test/tests
-        run: |
-          # Find .ts files, remove ./ prefix, and format as JSON array
-          files=$(find "." -mindepth 1 -maxdepth 1 -type f -name "*.ts" | sed -r "s/\.\/(.*)\.ts/\1/" | sort)
-          # Get the number of tests
-          test_count=$(echo "$files" | wc -l)
+    - uses: actions/checkout@v4.3.1
+    - id: tests
+      working-directory: bin/si-sdf-api-test/tests
+      run: |
+        # Find .ts files, remove ./ prefix, and format as JSON array
+        files=$(find "." -mindepth 1 -maxdepth 1 -type f -name "*.ts" | sed -r "s/\.\/(.*)\.ts/\1/" | sort)
+        # Get the number of tests
+        test_count=$(echo "$files" | wc -l)
 
-          # Get the list of workspace IDs from the environment variable
-          workspace_ids="${{ vars.API_TEST_WORKSPACE_IDS }}"
-          echo "workspace_ids found to be $workspace_ids"
-          workspace_count=$(echo "$workspace_ids" | tr ',' '\n' | wc -l)
+        # Get the list of workspace IDs from the environment variable
+        workspace_ids="${{ vars.API_TEST_WORKSPACE_IDS }}"
+        echo "workspace_ids found to be $workspace_ids"
+        workspace_count=$(echo "$workspace_ids" | tr ',' '\n' | wc -l)
 
-          # Validate that the number of workspace IDs is greater than or equal to the number of tests
-          if [ "$workspace_count" -lt "$test_count" ]; then
-              echo "Error: The number of workspace IDs ($workspace_count) is less than the number of tests ($test_count)."
-              exit 1
-          fi
+        # Validate that the number of workspace IDs is greater than or equal to the number of tests
+        if [ "$workspace_count" -lt "$test_count" ]; then
+            echo "Error: The number of workspace IDs ($workspace_count) is less than the number of tests ($test_count)."
+            exit 1
+        fi
 
-          # Format files as JSON array with correct numbering and sorted order
-          indexed_files=$(echo "$files" | awk '{print "{\"name\": \"" $0 "\", \"index\": " NR-1 "}"}' | jq -s .)
+        # Format files as JSON array with correct numbering and sorted order
+        indexed_files=$(echo "$files" | awk '{print "{\"name\": \"" $0 "\", \"index\": " NR-1 "}"}' | jq -s .)
 
-          # Ensure indexed_files are formatted correctly
-          test_output=$(echo "$indexed_files" | jq -c '.')
-          echo "tests=$test_output" >> "$GITHUB_OUTPUT"
-          echo "$test_output"
-
+        # Ensure indexed_files are formatted correctly
+        test_output=$(echo "$indexed_files" | jq -c '.')
+        echo "tests=$test_output" >> "$GITHUB_OUTPUT"
+        echo "$test_output"
   api-test:
     name: API Test SDF
     environment: ${{ inputs.environment }}
@@ -70,80 +46,75 @@ jobs:
       SDF_API_URL: ${{ vars.SDF_API_URL }}
       AUTH_API_URL: ${{ vars.AUTH_API_URL }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4.3.1
+    - name: Install Deno
+      uses: denoland/setup-deno@v2
+    - name: Run the deno exec with retry
+      run: |
+        cd bin/si-sdf-api-test
 
-      - name: Install Deno
-        uses: denoland/setup-deno@v2
+        echo "Running test ${{ matrix.tests.name }} with index: ${{ matrix.tests.index }}"
 
-      - name: Run the deno exec with retry
-        run: |
-          cd bin/si-sdf-api-test
+        # Split the workspace IDs into an array
+        workspace_ids="${{ vars.API_TEST_WORKSPACE_IDS }}"
+        IFS=',' read -r -a workspace_array <<< "$workspace_ids"
 
-          echo "Running test ${{ matrix.tests.name }} with index: ${{ matrix.tests.index }}"
+        # Pick the correct workspace ID based on the index
+        workspace_id="${workspace_array[${{ matrix.tests.index }}]}"
 
-          # Split the workspace IDs into an array
-          workspace_ids="${{ vars.API_TEST_WORKSPACE_IDS }}"
-          IFS=',' read -r -a workspace_array <<< "$workspace_ids"
+        echo "Using workspace ID: $workspace_id"
 
-          # Pick the correct workspace ID based on the index
-          workspace_id="${workspace_array[${{ matrix.tests.index }}]}"
+        # Retry loop with 5 attempts
+        n=0
+        max_retries=5
+        exit_code=0
 
-          echo "Using workspace ID: $workspace_id"
+        until [ $n -ge $max_retries ]
+        do
+          unset exit_code || echo "exit_code not set"
 
-          # Retry loop with 5 attempts
-          n=0
-          max_retries=5
-          exit_code=0
+          # Run the deno task and store exit code in a variable
+          deno run \
+          --allow-all \
+          --no-config \
+          main.ts \
+          --workspaceId "$workspace_id" \
+          --userId ${{ secrets.API_TEST_EMAIL }} \
+          --password ${{ secrets.API_TEST_PASSWORD }} \
+          --tests ${{ matrix.tests.name }} || exit_code=$?
 
-          until [ $n -ge $max_retries ]
-          do
-            unset exit_code || echo "exit_code not set"
-
-            # Run the deno task and store exit code in a variable
-            deno run \
-            --allow-all \
-            --no-config \
-            main.ts \
-            --workspaceId "$workspace_id" \
-            --userId ${{ secrets.API_TEST_EMAIL }} \
-            --password ${{ secrets.API_TEST_PASSWORD }} \
-            --tests ${{ matrix.tests.name }} || exit_code=$?
-
-            # Check the exit code
-            if [ -z "$exit_code" ]; then
-              echo "Deno task succeeded [ or the orchestration failed for a totally non-valid reason ]!"
-              exit 0
-            fi
-
-            n=$((n+1))
-            echo "Attempt $n/$max_retries failed with exit code $exit_code! Retrying..."
-            sleep 60
-          done
-
-          if [ $n -ge $max_retries ]; then
-            echo "All $max_retries attempts failed."
+          # Check the exit code
+          if [ -z "$exit_code" ]; then
+            echo "Deno task succeeded [ or the orchestration failed for a totally non-valid reason ]!"
+            exit 0
           fi
 
-          echo "last_exit_code=$exit_code" >> "$GITHUB_ENV"
-          exit "$exit_code"
+          n=$((n+1))
+          echo "Attempt $n/$max_retries failed with exit code $exit_code! Retrying..."
+          sleep 60
+        done
 
-      - name: Upload artifact if exit code 53
-        if: failure()
-        run: |
-          if [ "${{ env.last_exit_code }}" == "53" ]; then
-            echo "Uploading marker for test ${{ matrix.tests.name }}"
-            mkdir -p artifacts/${{ matrix.tests.name }}
-            echo "failure-marker" > artifacts/${{ matrix.tests.name }}/failure-marker
-          fi
+        if [ $n -ge $max_retries ]; then
+          echo "All $max_retries attempts failed."
+        fi
 
-      - name: Upload artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.tests.name }}
-          path: artifacts/${{ matrix.tests.name }}
-
+        echo "last_exit_code=$exit_code" >> "$GITHUB_ENV"
+        exit "$exit_code"
+    - name: Upload artifact if exit code 53
+      if: failure()
+      run: |
+        if [ "${{ env.last_exit_code }}" == "53" ]; then
+          echo "Uploading marker for test ${{ matrix.tests.name }}"
+          mkdir -p artifacts/${{ matrix.tests.name }}
+          echo "failure-marker" > artifacts/${{ matrix.tests.name }}/failure-marker
+        fi
+    - name: Upload artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.tests.name }}
+        path: artifacts/${{ matrix.tests.name }}
   luminork-api-test:
     name: API Test Luminork
     environment: ${{ inputs.environment }}
@@ -153,112 +124,130 @@ jobs:
       LUMINORK_WORKSPACE_ID: ${{ vars.LUMINORK_WORKSPACE_ID }}
       LUMINORK_AUTH_TOKEN: ${{ secrets.LUMINORK_AUTH_TOKEN }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4.3.1
+    - name: Install Deno
+      uses: denoland/setup-deno@v2
+    - name: Run the deno exec with retry
+      run: |
+        cd bin/si-luminork-api-tests
 
-      - name: Install Deno
-        uses: denoland/setup-deno@v2
+        n=0
+        max_retries=5
+        exit_code=0
 
-      - name: Run the deno exec with retry
-        run: |
-          cd bin/si-luminork-api-tests
+        until [ $n -ge $max_retries ]
+        do
+          unset exit_code || echo "exit_code not set"
 
-          n=0
-          max_retries=5
-          exit_code=0
+          # Run the luminork tests and store exit code in a variable
+          ./scripts/run-tests.sh || exit_code=$?
 
-          until [ $n -ge $max_retries ]
-          do
-            unset exit_code || echo "exit_code not set"
-
-            # Run the luminork tests and store exit code in a variable
-            ./scripts/run-tests.sh || exit_code=$?
-
-            # Check the exit code
-            if [ -z "$exit_code" ]; then
-              echo "Deno task succeeded [ or the orchestration failed for a totally non-valid reason ]!"
-              exit 0
-            fi
-
-            n=$((n+1))
-            echo "Attempt $n/$max_retries failed with exit code $exit_code! Retrying..."
-
-            # If we failed, back off and retry!
-            sleep_time=$((6 * n))
-            echo "Waiting ${sleep_time} seconds before retry..."
-            sleep $sleep_time
-          done
-
-          if [ $n -ge $max_retries ]; then
-            echo "All $max_retries attempts failed."
-            echo "Luminork API tests failed"
-            cd ../..
-            mkdir -p artifacts/luminork_tests
-            echo "failure-marker" > artifacts/luminork_tests/failure-marker
+          # Check the exit code
+          if [ -z "$exit_code" ]; then
+            echo "Deno task succeeded [ or the orchestration failed for a totally non-valid reason ]!"
+            exit 0
           fi
 
-          echo "last_exit_code=$exit_code" >> "$GITHUB_ENV"
-          exit "$exit_code"
+          n=$((n+1))
+          echo "Attempt $n/$max_retries failed with exit code $exit_code! Retrying..."
 
-      - name: Upload artifact if exit code 53
-        if: failure()
-        run: |
-          if [ "${{ env.last_exit_code }}" == "53" ]; then
-            echo "Uploading marker for test luminork_tests"
-            mkdir -p artifacts/luminork_tests
-            echo "failure-marker" > artifacts/luminork_tests/failure-marker
-          fi
+          # If we failed, back off and retry!
+          sleep_time=$((6 * n))
+          echo "Waiting ${sleep_time} seconds before retry..."
+          sleep $sleep_time
+        done
 
-      - name: Upload artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: luminork_tests
-          path: artifacts/luminork_tests
+        if [ $n -ge $max_retries ]; then
+          echo "All $max_retries attempts failed."
+          echo "Luminork API tests failed"
+          cd ../..
+          mkdir -p artifacts/luminork_tests
+          echo "failure-marker" > artifacts/luminork_tests/failure-marker
+        fi
 
+        echo "last_exit_code=$exit_code" >> "$GITHUB_ENV"
+        exit "$exit_code"
+    - name: Upload artifact if exit code 53
+      if: failure()
+      run: |
+        if [ "${{ env.last_exit_code }}" == "53" ]; then
+          echo "Uploading marker for test luminork_tests"
+          mkdir -p artifacts/luminork_tests
+          echo "failure-marker" > artifacts/luminork_tests/failure-marker
+        fi
+    - name: Upload artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: luminork_tests
+        path: artifacts/luminork_tests
   on-failure:
     runs-on: ubuntu-latest
     needs:
-      - api-test
-      - luminork-api-test
+    - api-test
+    - luminork-api-test
     environment: ${{ inputs.environment }}
     if: failure()
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-      - run: |
-          has_artifacts=false
-          # Check for marker files
-          for marker in artifacts/*/failure-marker; do
-            if [ -f "$marker" ]; then
-              echo "Artifact detected for failed test: $marker"
-              echo "Setting failure to true and breaking"
-              has_artifacts=true
-              break
-            fi
-          done
-          # If at least one valid failure marker is present, then page
-          if [ "$has_artifacts" = true ] && [ "${{ github.ref_name }}" = "main" ]; then
-              curl --location "${{ secrets.FIREHYDRANT_WEBHOOK_URL }}" \
-              --header "Content-Type: application/json" \
-              --data "{
-                \"summary\": \"API ${{ inputs.environment }} Tests Fail\",
-                \"body\": \"API Tests have failed for ${{ inputs.environment }}.\",
-                \"links\": [
-                  {
-                    \"href\": \"https://github.com/systeminit/si/actions/runs/$GITHUB_RUN_ID\",
-                    \"text\": \"E2E Test Run ${{ inputs.environment }}\"
-                  }
-                ],
-                \"tags\": [
-                  \"service:github\"
-                ]
-              }"
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+    - run: |
+        has_artifacts=false
+        # Check for marker files
+        for marker in artifacts/*/failure-marker; do
+          if [ -f "$marker" ]; then
+            echo "Artifact detected for failed test: $marker"
+            echo "Setting failure to true and breaking"
+            has_artifacts=true
+            break
           fi
-      - run: |
-          # Always send the Internal Slack Notification if failure detected, regardless of error source
-          curl --location "${{ secrets.SLACK_WEBHOOK_URL }}" -X POST \
-            --header 'Content-type: application/json' \
-            --data "{\"text\": \":si: Failed API Tests for ${{ inputs.environment }}: <https://github.com/systeminit/si/actions/runs/$GITHUB_RUN_ID|:test_tube: Link>\"}"
+        done
+        # If at least one valid failure marker is present, then page
+        if [ "$has_artifacts" = true ] && [ "${{ github.ref_name }}" = "main" ]; then
+            curl --location "${{ secrets.FIREHYDRANT_WEBHOOK_URL }}" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"summary\": \"API ${{ inputs.environment }} Tests Fail\",
+              \"body\": \"API Tests have failed for ${{ inputs.environment }}.\",
+              \"links\": [
+                {
+                  \"href\": \"https://github.com/systeminit/si/actions/runs/$GITHUB_RUN_ID\",
+                  \"text\": \"E2E Test Run ${{ inputs.environment }}\"
+                }
+              ],
+              \"tags\": [
+                \"service:github\"
+              ]
+            }"
+        fi
+    - run: |
+        # Always send the Internal Slack Notification if failure detected, regardless of error source
+        curl --location "${{ secrets.SLACK_WEBHOOK_URL }}" -X POST \
+          --header 'Content-type: application/json' \
+          --data "{\"text\": \":si: Failed API Tests for ${{ inputs.environment }}: <https://github.com/systeminit/si/actions/runs/$GITHUB_RUN_ID|:test_tube: Link>\"}"
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+        description: where to test
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        description: where to test
+        default: tools
+        options:
+        - tools
+        - production
+        - perf
+  repository_dispatch:
+    types:
+    - webhook
