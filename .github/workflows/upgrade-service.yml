@@ -1,22 +1,8 @@
 name: Upgrade Service
-
 run-name: Upgrading ${{ inputs.service }}
-
-# Required for IDP JWT and actions/checkout
 permissions:
-      id-token: write
-      contents: read
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "where to deploy"
-      service:
-        type: string
-
+  id-token: write
+  contents: read
 jobs:
   upgrade:
     environment: ${{ inputs.environment }}
@@ -26,35 +12,30 @@ jobs:
     outputs:
       upgrade_failed: ${{ steps.check_failure.outputs.failed }}
     steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
-          role-session-name: GitHub_to_AWS_via_FederatedOIDC
-          aws-region: us-east-1
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Upgrade service
-        id: upgrade
-        run: |
-          component/toolbox/awsi.sh upgrade -p pull-from-env -r us-east-1 -a y -s ${{ inputs.service }} -e ${{ inputs.environment }}
-
-      - name: Up service
-        id: up
-        run: |
-          component/toolbox/awsi.sh service-state -p pull-from-env -r us-east-1 -a y -s ${{ inputs.service }} -S up
-
-      - name: Check if any step failed
-        id: check_failure
-        run: |
-          if [ "${{ steps.upgrade.outcome }}" == "failure" ] || [ "${{ steps.up.outcome }}" == "failure" ]; then
-            echo "failed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "failed=false" >> "$GITHUB_OUTPUT"
-          fi
-
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
+        role-session-name: GitHub_to_AWS_via_FederatedOIDC
+        aws-region: us-east-1
+    - name: Checkout code
+      uses: actions/checkout@v4.3.1
+    - name: Upgrade service
+      id: upgrade
+      run: |
+        component/toolbox/awsi.sh upgrade -p pull-from-env -r us-east-1 -a y -s ${{ inputs.service }} -e ${{ inputs.environment }}
+    - name: Up service
+      id: up
+      run: |
+        component/toolbox/awsi.sh service-state -p pull-from-env -r us-east-1 -a y -s ${{ inputs.service }} -S up
+    - name: Check if any step failed
+      id: check_failure
+      run: |
+        if [ "${{ steps.upgrade.outcome }}" == "failure" ] || [ "${{ steps.up.outcome }}" == "failure" ]; then
+          echo "failed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "failed=false" >> "$GITHUB_OUTPUT"
+        fi
   on-failure:
     uses: ./.github/workflows/instance-refresh.yml
     needs: upgrade
@@ -63,3 +44,14 @@ jobs:
       environment: ${{ inputs.environment }}
       service: ${{ inputs.service }}
     secrets: inherit
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+        description: where to deploy
+      service:
+        type: string
