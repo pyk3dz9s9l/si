@@ -1,43 +1,15 @@
 name: Restart Services to refresh memory
-
 run-name: Refresh Service Unit in ${{ inputs.environment }} by @${{ github.actor }}
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        default: "tools"
-
-  workflow_dispatch:
-    inputs:
-      environment:
-        type: choice
-        required: true
-        description: "Where to deploy"
-        default: "tools"
-        options:
-          - tools
-          - production
-          - perf
-
-# We only one one deploy happening at a time per environment, so if one is
-# in progress, we'll wait for it to finish before starting the
-# next one.
-# Note that this will also wait for E2E tests to finish, as per the crons workflows
 concurrency:
   group: deploy-${{ inputs.environment }}
   cancel-in-progress: false
-
 jobs:
-
   restart-rebaser:
     uses: ./.github/workflows/service-restart.yml
     with:
       environment: ${{ inputs.environment }}
       service: rebaser
     secrets: inherit
-
   restart-pinga:
     needs: restart-rebaser
     uses: ./.github/workflows/service-restart.yml
@@ -45,7 +17,6 @@ jobs:
       environment: ${{ inputs.environment }}
       service: pinga
     secrets: inherit
-    
   restart-edda:
     needs: restart-rebaser
     uses: ./.github/workflows/service-restart.yml
@@ -53,7 +24,6 @@ jobs:
       environment: ${{ inputs.environment }}
       service: edda
     secrets: inherit
-    
   restart-luminork:
     needs: restart-pinga
     uses: ./.github/workflows/service-restart.yml
@@ -61,7 +31,6 @@ jobs:
       environment: ${{ inputs.environment }}
       service: luminork
     secrets: inherit
-
   restart-sdf:
     needs: restart-luminork
     uses: ./.github/workflows/service-restart.yml
@@ -69,28 +38,44 @@ jobs:
       environment: ${{ inputs.environment }}
       service: sdf
     secrets: inherit
-
   sleep-between:
     name: Wait for 10 minutes
     needs: restart-sdf
     runs-on: ubuntu-latest
     steps:
-      - name: Sleep for 10 minutes
-        run: sleep 600
-
+    - name: Sleep for 10 minutes
+      run: sleep 600
   e2e-validation:
     needs:
-      - sleep-between
+    - sleep-between
     uses: ./.github/workflows/e2e-validation.yml
     with:
       environment: ${{ inputs.environment }}
       test_dir: cypress/e2e
     secrets: inherit
-
   api-test:
     needs:
-      - sleep-between
+    - sleep-between
     uses: ./.github/workflows/run-api-test.yml
     with:
       environment: ${{ inputs.environment }}
     secrets: inherit
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        default: tools
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        description: Where to deploy
+        default: tools
+        options:
+        - tools
+        - production
+        - perf
