@@ -1,42 +1,36 @@
 name: Instigate & Check CDN State
-
-run-name: Instigate & Check CDN State for ${{ inputs.environment }} 
-
-# Required for IDP JWT and actions/checkout
+run-name: Instigate & Check CDN State for ${{ inputs.environment }}
 permissions:
-      id-token: write
-      contents: read
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "Where to check"
-
+  id-token: write
+  contents: read
 jobs:
   check-cdn:
     name: Instigate & Check CDN Invalidation
     environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
-          role-session-name: GitHub_to_AWS_via_FederatedOIDC
-          aws-region: us-east-1
-
-      - name: Invalidate web cache
-        run: |
-          aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DIST_ID }} \
-          --paths "/cyclone/stable/*" "/sdf/stable/*" "/rebaser/stable/*" "/pinga/stable/*" "/veritech/stable/*" "/forklift/stable/*" "/edda/stable/*" "/luminork/stable/*" "/si/stable/*" \
-          --query 'Invalidation.Id' --output text
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Check & wait for any active invalidations
-        run: |
-          component/toolbox/awsi.sh check-invalidation -r us-east-1 -p pull-from-env -t 300 -d all -a y
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
+        role-session-name: GitHub_to_AWS_via_FederatedOIDC
+        aws-region: us-east-1
+    - name: Invalidate web cache
+      run: |
+        aws cloudfront create-invalidation --distribution-id ${{ secrets.CLOUDFRONT_DIST_ID }} \
+        --paths "/cyclone/stable/*" "/sdf/stable/*" "/rebaser/stable/*" "/pinga/stable/*" "/veritech/stable/*" "/forklift/stable/*" "/edda/stable/*" "/luminork/stable/*" "/si/stable/*" \
+        --query 'Invalidation.Id' --output text
+    - name: Checkout code
+      uses: actions/checkout@v4.3.1
+    - name: Check & wait for any active invalidations
+      run: |
+        component/toolbox/awsi.sh check-invalidation -r us-east-1 -p pull-from-env -t 300 -d all -a y
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+        description: Where to check
