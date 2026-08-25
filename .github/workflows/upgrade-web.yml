@@ -1,91 +1,82 @@
 name: Build and Deploy Web
-
-# Required for IDP JWT and actions/checkout
 permissions:
-      id-token: write
-      contents: read
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "Where to deploy"
-  workflow_dispatch:
-    inputs:
-      environment:
-        type: choice
-        required: true
-        description: "Where to deploy"
-        default: "tools"
-        options:
-          - tools
-          - production
-          - perf
-          - build-only
-
+  id-token: write
+  contents: read
 jobs:
   down:
     environment: ${{ inputs.environment }}
     name: Deploy Service
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials
-        if: ${{ inputs.environment != 'build-only' }}
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
-          role-session-name: GitHub_to_AWS_via_FederatedOIDC
-          aws-region: us-east-1
-
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '20'
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        working-directory: app/web
-        run: pnpm install
-
-      - name: Build
-        working-directory: app/web
-        env:
-          VITE_OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.VITE_SI_WORKSPACE_URL }}
-        run: |
-          if [[ "${{ inputs.environment }}" == "production" ]]; then
-            export MODE=production
-          else
-            export MODE=staging
-          fi
-          pnpm run build --mode $MODE
-
-      - name: Deploy
-        if: ${{ inputs.environment != 'build-only' }}
-        uses: islishude/spa-deploy-action@v1.1.1
-        with:
-          dir-path: app/web/dist
-          s3-bucket: ${{ vars.WEB_HOSTING_BUCKET }}
-          cache-control-merge-policy: replace
-          cache-control: >
-            {
-              "assets/webworker.js": "public,max-age=60,stale-while-revalidate=2592000",
-              "assets/shared_webworker.js": "public,max-age=60,stale-while-revalidate=2592000"
-            }
-
-      - name: Invalidate web cache
-        if: ${{ inputs.environment != 'build-only' }}
-        run: |
-          DIST_ID="${{ secrets.CLOUDFRONT_DIST_ID }}"
-          # Create a CloudFront invalidation for all objects (/*)
-          invalidation_id="$(aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query 'Invalidation.Id' --output text)"
-          # Check the status of the invalidation until it's completed
-          while [[ "$(aws cloudfront get-invalidation --distribution-id "$DIST_ID" --id "$invalidation_id" --query 'Invalidation.Status' --output text)" != "Completed" ]]; do
-              echo "Invalidation is still in progress. Waiting..."
-              sleep 5
-          done
-          echo "Invalidation is complete."
+    - name: Configure AWS Credentials
+      if: ${{ inputs.environment != 'build-only' }}
+      uses: aws-actions/configure-aws-credentials@v5
+      with:
+        role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
+        role-session-name: GitHub_to_AWS_via_FederatedOIDC
+        aws-region: us-east-1
+    - uses: actions/checkout@v5.0.1
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v5
+      with:
+        node-version: '20'
+        cache: pnpm
+    - name: Install dependencies
+      working-directory: app/web
+      run: pnpm install
+    - name: Build
+      working-directory: app/web
+      env:
+        VITE_OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.VITE_SI_WORKSPACE_URL }}
+      run: |
+        if [[ "${{ inputs.environment }}" == "production" ]]; then
+          export MODE=production
+        else
+          export MODE=staging
+        fi
+        pnpm run build --mode $MODE
+    - name: Deploy
+      if: ${{ inputs.environment != 'build-only' }}
+      uses: islishude/spa-deploy-action@v1.1.1
+      with:
+        dir-path: app/web/dist
+        s3-bucket: ${{ vars.WEB_HOSTING_BUCKET }}
+        cache-control-merge-policy: replace
+        cache-control: |
+          {
+            "assets/webworker.js": "public,max-age=60,stale-while-revalidate=2592000",
+            "assets/shared_webworker.js": "public,max-age=60,stale-while-revalidate=2592000"
+          }
+    - name: Invalidate web cache
+      if: ${{ inputs.environment != 'build-only' }}
+      run: |
+        DIST_ID="${{ secrets.CLOUDFRONT_DIST_ID }}"
+        # Create a CloudFront invalidation for all objects (/*)
+        invalidation_id="$(aws cloudfront create-invalidation --distribution-id $DIST_ID --paths "/*" --query 'Invalidation.Id' --output text)"
+        # Check the status of the invalidation until it's completed
+        while [[ "$(aws cloudfront get-invalidation --distribution-id "$DIST_ID" --id "$invalidation_id" --query 'Invalidation.Status' --output text)" != "Completed" ]]; do
+            echo "Invalidation is still in progress. Waiting..."
+            sleep 5
+        done
+        echo "Invalidation is complete."
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+        description: Where to deploy
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        description: Where to deploy
+        default: tools
+        options:
+        - tools
+        - production
+        - perf
+        - build-only
