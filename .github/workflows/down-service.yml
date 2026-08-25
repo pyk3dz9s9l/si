@@ -1,44 +1,25 @@
 name: Bring Down Service
-
 run-name: Bringing ${{ inputs.service }} down
-
-# Required for IDP JWT and actions/checkout
 permissions:
-      id-token: write
-      contents: read
-
-on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "where to deploy"
-      service:
-        type: string
-        required: true
-        description: "service to deploy"
-
+  id-token: write
+  contents: read
 jobs:
   down:
     environment: ${{ inputs.environment }}
     name: ${{ inputs.service }} Down
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
-          role-session-name: GitHub_to_AWS_via_FederatedOIDC
-          aws-region: us-east-1
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Down service
-        run: |
-          component/toolbox/awsi.sh service-state -p pull-from-env -r us-east-1 -a y -s ${{ inputs.service }} -S down
-
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ vars.AWS_ASSUME_ROLE_ARN }}
+        role-session-name: GitHub_to_AWS_via_FederatedOIDC
+        aws-region: us-east-1
+    - name: Checkout code
+      uses: actions/checkout@v4.3.1
+    - name: Down service
+      run: |
+        component/toolbox/awsi.sh service-state -p pull-from-env -r us-east-1 -a y -s ${{ inputs.service }} -S down
   on-failure:
     uses: ./.github/workflows/instance-refresh.yml
     needs: down
@@ -47,3 +28,16 @@ jobs:
       environment: ${{ inputs.environment }}
       service: ${{ inputs.service }}
     secrets: inherit
+env:
+  GERALT_SECRET: ${{ secrets.GERALT }}
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+        description: where to deploy
+      service:
+        type: string
+        required: true
+        description: service to deploy
